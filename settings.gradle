@@ -16,5 +16,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "DocumentScanner"
 
-//include ':documentscanner-demo'
+include ':documentscanner-demo'
 include ':documentscanner'
