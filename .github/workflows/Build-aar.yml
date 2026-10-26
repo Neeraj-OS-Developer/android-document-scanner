@@ -1,46 +1,42 @@
 # ============================================================
-# Workflow: Build Library AAR + Demo APK
+# Workflow: Build Library AAR + Demo Debug/Release APKs
 # Triggers: manual, push to main/master, PR, tag
-# Outputs: AAR (library), APK (demo app) as artifacts + release assets
+# Outputs:
+#   - Library AAR (release)
+#   - Demo Debug APK (auto-signed, installable)
+#   - Demo Release APK (unsigned)
 # ============================================================
 
-name: Build AAR and Demo APK
+name: Build AAR and Demo APKs
 
 on:
-  # Manual trigger — Actions tab se "Run workflow" button
   workflow_dispatch:
-
-  # Auto trigger on push to main/master
   push:
     branches: [ main, master ]
     tags:
-      - 'v*'   # tag push -> release banega
-
-  # PR pe bhi build chalao (verify karne ke liye)
+      - 'v*'
   pull_request:
     branches: [ main, master ]
 
-# Minimal permissions — release attach karne ke liye write
 permissions:
   contents: write
 
-# Ek waqt me ek hi build — overlapping se bachne ke liye
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build library + demo
+    name: Build AAR + Debug/Release APKs
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      # ---------- 1. Code checkout ----------
+      # ---------- 1. Checkout ----------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---------- 2. JDK 17 setup (AGP 8.9+ ke liye mandatory) ----------
+      # ---------- 2. JDK 17 ----------
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -48,76 +44,107 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ---------- 3. gradlew executable banao ----------
+      # ---------- 3. gradlew executable ----------
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # ---------- 4. Environment info (debug ke liye useful) ----------
+      # ---------- 4. Environment info ----------
       - name: Print environment info
         run: |
-          echo "Java version:"
+          echo "=== Java ==="
           java -version
           echo ""
-          echo "Gradle version:"
+          echo "=== Gradle ==="
           ./gradlew --version
           echo ""
-          echo "Available projects:"
+          echo "=== Projects ==="
           ./gradlew projects
 
-      # ---------- 5. Library AAR build ----------
-      - name: Build library AAR
+      # ---------- 5. Library AAR (release) ----------
+      - name: Build library AAR (release)
         run: |
           ./gradlew :documentscanner:clean \
                     :documentscanner:assembleRelease \
-                    --stacktrace \
-                    --no-daemon
+                    --stacktrace --no-daemon
 
-      # ---------- 6. Demo APK build ----------
-      - name: Build demo APK
+      # ---------- 6. Demo DEBUG APK (auto-signed, installable) ----------
+      - name: Build demo APK (debug)
+        run: |
+          ./gradlew :documentscanner-demo:assembleDebug \
+                    --stacktrace --no-daemon
+
+      # ---------- 7. Demo RELEASE APK (unsigned) ----------
+      - name: Build demo APK (release)
         run: |
           ./gradlew :documentscanner-demo:assembleRelease \
-                    --stacktrace \
-                    --no-daemon
+                    --stacktrace --no-daemon
 
-      # ---------- 7. AAR locate karo ----------
+      # ---------- 8. Locate AAR ----------
       - name: Find AAR
         id: find_aar
-        if: success()
         run: |
           AAR_PATH=$(find documentscanner/build/outputs/aar -name "*-release.aar" -type f | head -n1)
           if [ -z "$AAR_PATH" ]; then
-            echo "❌ AAR nahi mila — build fail ho gaya ya path alag hai"
-            echo "Search results:"
-            find . -name "*.aar" -type f || true
-            exit 1
+            echo "❌ AAR nahi mila"; find . -name "*.aar" || true; exit 1
           fi
-          AAR_NAME=$(basename "$AAR_PATH")
-          AAR_SIZE=$(du -h "$AAR_PATH" | cut -f1)
-          echo "✅ AAR mila: $AAR_PATH ($AAR_SIZE)"
+          echo "✅ AAR: $AAR_PATH"
           echo "path=$AAR_PATH" >> "$GITHUB_OUTPUT"
-          echo "name=$AAR_NAME" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$AAR_PATH")" >> "$GITHUB_OUTPUT"
 
-      # ---------- 8. Demo APK locate karo ----------
-      - name: Find demo APK
-        id: find_apk
-        if: success()
+      # ---------- 9. Locate DEBUG APK ----------
+      - name: Find debug APK
+        id: find_debug_apk
+        run: |
+          APK_PATH=$(find documentscanner-demo/build/outputs/apk/debug -name "*.apk" -type f | head -n1)
+          if [ -z "$APK_PATH" ]; then
+            echo "❌ Debug APK nahi mila"; find . -name "*.apk" || true; exit 1
+          fi
+          # Rename so it's clear in downloads
+          OUT="dist/documentscanner-demo-debug.apk"
+          mkdir -p dist
+          cp "$APK_PATH" "$OUT"
+          echo "✅ Debug APK: $OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$OUT")" >> "$GITHUB_OUTPUT"
+
+      # ---------- 10. Locate RELEASE APK ----------
+      - name: Find release APK
+        id: find_release_apk
         run: |
           APK_PATH=$(find documentscanner-demo/build/outputs/apk/release -name "*.apk" -type f | head -n1)
           if [ -z "$APK_PATH" ]; then
-            echo "❌ APK nahi mila — demo build fail ho gaya"
-            echo "Search results:"
-            find . -name "*.apk" -type f || true
-            exit 1
+            echo "❌ Release APK nahi mila"; find . -name "*.apk" || true; exit 1
           fi
-          APK_NAME=$(basename "$APK_PATH")
-          APK_SIZE=$(du -h "$APK_PATH" | cut -f1)
-          echo "✅ APK mila: $APK_PATH ($APK_SIZE)"
-          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
-          echo "name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          OUT="dist/documentscanner-demo-release-unsigned.apk"
+          mkdir -p dist
+          cp "$APK_PATH" "$OUT"
+          echo "✅ Release APK: $OUT"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$OUT")" >> "$GITHUB_OUTPUT"
 
-      # ---------- 9. Artifacts upload (AAR + APK) ----------
+      # ---------- 11. Verify signatures ----------
+      - name: Verify APK signatures
+        run: |
+          echo "=== Debug APK signature check ==="
+          if [ -f "${{ steps.find_debug_apk.outputs.path }}" ]; then
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n1)
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify --print-certs "${{ steps.find_debug_apk.outputs.path }}" || echo "apksigner check failed"
+            else
+              echo "apksigner not found, skipping"
+            fi
+          fi
+          echo ""
+          echo "=== Release APK signature check ==="
+          if [ -f "${{ steps.find_release_apk.outputs.path }}" ]; then
+            APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n1)
+            if [ -n "$APKSIGNER" ]; then
+              "$APKSIGNER" verify "${{ steps.find_release_apk.outputs.path }}" || echo "Release APK is UNSIGNED (expected)"
+            fi
+          fi
+
+      # ---------- 12. Upload artifacts ----------
       - name: Upload AAR
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: documentscanner-aar
@@ -125,49 +152,61 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload demo APK
-        if: success()
+      - name: Upload Debug APK (installable)
         uses: actions/upload-artifact@v4
         with:
-          name: documentscanner-demo-apk
-          path: ${{ steps.find_apk.outputs.path }}
+          name: documentscanner-demo-debug-apk
+          path: ${{ steps.find_debug_apk.outputs.path }}
           if-no-files-found: error
           retention-days: 30
 
-      # ---------- 10. Build summary (Actions UI me dikhega) ----------
+      - name: Upload Release APK (unsigned)
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentscanner-demo-release-apk-unsigned
+          path: ${{ steps.find_release_apk.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # ---------- 13. Build summary ----------
       - name: Build summary
         if: success()
         run: |
           echo "## ✅ Build Successful" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Artifact | File | Size |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|----------|------|------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Artifact | File | Size | Note |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|----------|------|------|------|" >> "$GITHUB_STEP_SUMMARY"
           AAR_SIZE=$(du -h "${{ steps.find_aar.outputs.path }}" | cut -f1)
-          APK_SIZE=$(du -h "${{ steps.find_apk.outputs.path }}" | cut -f1)
-          echo "| Library AAR | ${{ steps.find_aar.outputs.name }} | $AAR_SIZE |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Demo APK | ${{ steps.find_apk.outputs.name }} | $APK_SIZE |" >> "$GITHUB_STEP_SUMMARY"
+          DBG_SIZE=$(du -h "${{ steps.find_debug_apk.outputs.path }}" | cut -f1)
+          REL_SIZE=$(du -h "${{ steps.find_release_apk.outputs.path }}" | cut -f1)
+          echo "| AAR | ${{ steps.find_aar.outputs.name }} | $AAR_SIZE | Library distribution |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Debug APK | ${{ steps.find_debug_apk.outputs.name }} | $DBG_SIZE | ✅ Installable (auto-signed) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Release APK | ${{ steps.find_release_apk.outputs.name }} | $REL_SIZE | ❌ Unsigned (needs signing) |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Artifacts neeche download section me available hain." >> "$GITHUB_STEP_SUMMARY"
+          echo "**Install karne ke liye Debug APK use karo:**" >> "$GITHUB_STEP_SUMMARY"
+          echo '```bash' >> "$GITHUB_STEP_SUMMARY"
+          echo "adb install documentscanner-demo-debug.apk" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      # ---------- 11. GitHub Release (sirf tag push pe) ----------
+      # ---------- 14. Release (sirf tag push pe) ----------
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: false
           files: |
             ${{ steps.find_aar.outputs.path }}
-            ${{ steps.find_apk.outputs.path }}
+            ${{ steps.find_debug_apk.outputs.path }}
+            ${{ steps.find_release_apk.outputs.path }}
           body: |
             ## Release ${{ github.ref_name }}
 
             ### Artifacts
-            - **Library AAR**: `${{ steps.find_aar.outputs.name }}`
-            - **Demo APK**: `${{ steps.find_apk.outputs.name }}`
+            - **AAR**: `${{ steps.find_aar.outputs.name }}`
+            - **Debug APK** (installable): `${{ steps.find_debug_apk.outputs.name }}`
+            - **Release APK** (unsigned): `${{ steps.find_release_apk.outputs.name }}`
 
-            ### Install
+            ### Install (debug)
             ```bash
-            adb install ${{ steps.find_apk.outputs.name }}
+            adb install ${{ steps.find_debug_apk.outputs.name }}
             ```
