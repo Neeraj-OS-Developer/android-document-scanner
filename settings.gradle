@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DocumentScanner Demo"
+rootProject.name = "DocumentScanner"
 
-include ':documentscanner-demo'
-//include ':documentscanner'
+//include ':documentscanner-demo'
+include ':documentscanner'
